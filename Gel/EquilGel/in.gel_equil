@@ -1,0 +1,112 @@
+# ------------- LAMMPS input script to run the equilibrium of polymer with dynamic bond
+# ------------- author : Jianshe Xia
+
+# ============= simulation setting
+variable simname index Gel
+variable input_fname index network.data
+variable output_fname index  ${simname}.equal 
+# the values of flag 
+variable data_flag index 0 # 0 for data, 1 for restart
+variable npt_flag index 1
+variable equil_flag index 1
+variable dt index 0.01
+variable temp index 1.0
+variable press index 1.73
+variable resteps index 0
+variable epsilon_r index 30.0
+
+# ============= simulation setting
+variable nsteps_equil index 20000000
+variable nsteps_output index 100000000
+variable nsteps_restart index 10000
+variable nsteps_xtc index 10000
+
+# the minimum distance to create bond
+variable r_min index 1.14
+variable energy_barrier index 0.0
+variable seed index 4928457 
+variable seed1 index 2352323
+
+# ============= basic parameters
+units lj
+boundary p p p
+atom_style full 
+
+pair_style lj/cut 1.5
+pair_modify shift yes 
+bond_style fene 
+special_bonds fene #lj/coul 0.0 1.0 1.0
+
+# ============= import data and parameter files
+if "${data_flag} == 0" then &
+    "read_data ${input_fname}" &
+else &
+    "read_restart ${input_fname}"
+
+pair_coeff * * 1.0 1.0 1.5
+bond_coeff * 30.0 1.5 1.0 1.0
+mass * 1.0
+
+# ============= define regions and groups
+group gA type 1
+group gB type 2
+group gC type 3 
+group gAB type 1 2
+
+comm_modify vel yes cutoff 2.0
+neighbor 0.4 bin
+neigh_modify every 1 delay 0 check yes 
+
+#velocity all create ${temp} ${seed1} mom yes rot yes dist gaussian
+reset_timestep ${resteps}
+
+# ============= run 
+timestep ${dt}
+
+restart ${nsteps_restart} 1.restart 2.restart
+
+fix exchange gAB bond/exchange 10 1 2 ${r_min} 2 barrier ${energy_barrier} frac 1 598934 exchange 1 2
+fix interchange gAB bond/interchange 10 1 2 ${r_min} 2 barrier ${energy_barrier} frac 1 598934 interchange 2 1
+fix mylgv all langevin ${temp} ${temp} 1.2 ${seed}
+
+thermo_style custom step temp pe ke press vol density etotal f_exchange[1] f_interchange[2] f_exchange[4] f_interchange[4]
+thermo 1000
+thermo_modify flush yes
+
+if "${npt_flag} == 1" then &
+    "fix mynpt all npt temp ${temp} ${temp} 1 iso ${press} ${press} 10" &
+    "run ${nsteps_equil}" &
+    "write_data ${simname}.npt.data" &
+    "unfix mynpt"
+
+fix mynvt all nvt temp ${temp} ${temp} 10
+
+if "${equil_flag} == 1" then &
+    "run 10000000" 
+
+#compute msdB gB msd com yes
+#compute msdC gC msd com yes
+#fix myAave_time gA ave/time 1000 1 1000 c_msdA[4] file tmpA.msd 
+#fix myBave_time gB ave/time 10 100 1000 c_msdB[4] file tmpB.sw.msd
+#fix myCave_time gC ave/time 1000 1 1000 c_msdC[4] file tmpC.msd
+
+#compute mysbond gAB property/local batom1 batom2 btype
+#dump mylocal gAB local/gz 1000 ${simname}.sw.bond.gz index c_mysbond[1] c_mysbond[2] c_mysbond[3] 
+#dump_modify mylocal append yes
+
+#compute peratom all stress/atom NULL 
+#compute p all reduce sum c_peratom[1] c_peratom[2] c_peratom[3] c_peratom[4] c_peratom[5] c_peratom[6]
+#variable pxx equal -c_p[1]/vol
+#variable pyy equal -c_p[2]/vol
+#variable pzz equal -c_p[3]/vol
+#variable pxy equal -c_p[4]/vol
+#variable pxz equal -c_p[5]/vol
+#variable pyz equal -c_p[6]/vol
+#variable nxy equal v_pxx-v_pyy
+#variable nxz equal v_pxx-v_pzz
+#variable nyz equal v_pyy-v_pzz
+#fix pcor all ave/correlate/long 1 10000000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file ${simname}.sw.gt nlen 16 ncount 2 ncorr 64
+
+run ${nsteps_output}
+
+print "All done!"

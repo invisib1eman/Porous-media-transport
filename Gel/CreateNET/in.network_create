@@ -1,0 +1,127 @@
+# ------------- LAMMPS input script to run the equilibrium of polymer with dynamic bond
+# ------------- author : Jianshe Xia
+
+# ============= simulation setting
+variable simname index rba
+variable input_fname index branch_rba.data
+variable output_fname index  ${simname}.network.equil
+# the values of flag 
+variable data_flag index 0 # 0 for data, 1 for restart
+variable dt index 0.01
+variable temp index 1.0
+variable press index 1.73
+variable target_rho index 0.85
+variable resteps index 0
+variable epsilon_r index 30.0
+
+# ============= simulation setting
+variable athermal_steps index 10000000
+variable resizing_steps index 1000000
+variable nsteps_create index 40000000 
+variable nsteps_equil index 10000000
+variable nsteps_restart index 10000
+variable nsteps_xtc index 10000
+
+# the minimum distance to create bond
+variable r_min index 1.2
+variable energy_barrier index 0.0
+variable seed index 4928457 
+variable seed1 index 4928457 
+variable seed2 index 2352323
+
+# ============= basic parameters
+units lj
+boundary p p p
+atom_style full 
+
+pair_style lj/cut 1.5 
+pair_modify shift yes 
+bond_style fene # hybrid fene harmonic 
+special_bonds fene #lj/coul 0.0 1.0 1.0
+
+# ============= import data and parameter files
+
+read_data ${input_fname} extra/bond/types 1 extra/bond/per/atom 10 extra/special/per/atom 10000
+
+pair_coeff * * 1.0 1.0 1.5
+bond_coeff * 30.0 1.5 1.0 1.0
+#bond_coeff 2 harmonic 100 ${r_min}
+mass * 1.0
+
+# ============= define regions and groups
+group gA type 1
+group gB type 2
+group gC type 3 
+group gAB type 1 2
+
+comm_modify vel yes cutoff 2.5
+neighbor 0.4 bin
+neigh_modify every 1 delay 1 check yes 
+
+velocity all create ${temp} ${seed1} mom yes rot yes dist gaussian
+reset_timestep ${resteps}
+
+# ============= run 
+timestep ${dt}
+
+thermo_style custom step temp pe ke press vol density etotal
+thermo 1000
+thermo_modify flush yes
+
+fix mynvt all nvt temp ${temp} ${temp} 10
+fix mylgv all langevin ${temp} ${temp} 1.2 ${seed}
+
+restart ${nsteps_restart} 1.restart 2.restart
+# Randomize the whole system
+run ${athermal_steps}
+
+variable init_rho equal atoms/vol
+variable target_V equal "v_init_rho/v_taget_rho*vol"
+variable s equal "(v_init_rho/v_target_rho)^0.3333333"
+variable target_l equal "lx*v_s"
+variable low equal  0 # "-1*v_target_l/2.0"
+variable hig equal  "v_target_l" # "v_target_l/2.0"
+
+fix mydeform all deform 10 x final ${low} ${hig} y final ${low} ${hig} z final ${low} ${hig} units box
+run ${resizing_steps}
+unfix mydeform
+print "Athermal relaxation at the target density"
+run ${athermal_steps}
+write_data compress.data
+
+###create AB bond####################################
+fix create gAB bond/create 1 1 2 ${r_min} 2 prob 1.0 ${seed2} iparam 1 1 jparam 1 2
+thermo_style custom step temp pe ke press vol density etotal f_create[2]
+thermo 1000
+thermo_modify flush yes
+
+#variable numbond equal f_create[2]
+#variable a loop 1000
+#label loop
+run ${nsteps_create}
+#if "${numbond} > 3199" then "jump SELF break"
+#next a
+#jump SELF loop
+#label break
+unfix create
+print "Create bond done!"
+###create AB bond####################################
+
+thermo_style custom step temp pe ke press vol density etotal
+thermo 1000
+thermo_modify flush yes
+
+run ${nsteps_equil}
+
+#variable bondlength index 2.0 1.8 1.6 1.4 1.2 0.96
+#label loopa
+#bond_coeff 2 harmonic 200 ${bondlength} 
+#run 2000000
+#next bondlength
+#jump SELF loopa
+
+#bond_coeff 2 fene 30.0 1.5 1.0 1.0
+
+#run 1000000
+
+write_data network.data
